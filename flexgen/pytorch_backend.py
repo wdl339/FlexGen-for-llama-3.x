@@ -845,14 +845,22 @@ def general_copy(dst: TorchTensor, dst_indices: Tuple[slice],
           dst.device.device_type == DeviceType.CUDA and
           not src.data.is_pinned()):
         # The cpu tensor is not pinned, use pin_memory as a relay
-        src = src.data[src_indices] if src_indices else src.data
-        dst = dst.data[dst_indices] if dst_indices else dst.data
+        # src = src.data[src_indices] if src_indices is not None else src.data
+        # dst = dst.data[dst_indices] if dst_indices is not None else dst.data
+        if torch.is_tensor(src_indices):
+            src = vector_gather(src.data, src_indices) if src_indices is not None else src.data
+        else:
+            src = src.data[src_indices] if src_indices is not None else src.data
+        dst = dst.data[dst_indices] if dst_indices is not None else dst.data
         src = src.pin_memory()
         dst.copy_(src, non_blocking=True)
     else:
         # The normal path
-        src = src.data[src_indices] if src_indices else src.data
-        dst = dst.data[dst_indices] if dst_indices else dst.data
+        if torch.is_tensor(src_indices):
+            src = vector_gather(src.data, src_indices.to(src.data.device)) if src_indices is not None else src.data
+        else:
+            src = src.data[src_indices] if src_indices is not None else src.data
+        dst = dst.data[dst_indices] if dst_indices is not None else dst.data
         dst.copy_(src, non_blocking=True)
 
 

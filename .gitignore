@@ -33,3 +33,7 @@ flexgen/apps/data_wrangle/core
 
 # tmp scripts
 today_job.sh
+
+opt_weights
+llama_weights
+offload_dir
