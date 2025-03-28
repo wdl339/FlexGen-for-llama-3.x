@@ -14,7 +14,7 @@ from flexgen.flex_opt import (Policy, init_weight_list, InputEmbed, OutputEmbed,
                               TransformerLayer, OptLM, get_filename)
 from flexgen.timer import timers
 from flexgen.utils import (ExecutionEnv, GB, ValueHolder,
-    array_1d, array_2d, str2bool, project_decode_latency, write_benchmark_log)
+    array_1d, array_2d, str2bool, project_decode_latency)
 from datetime import datetime
 
 fix_recursive_import()
@@ -334,8 +334,6 @@ def run_flexgen(args):
     disk = TorchDisk(args.offload_dir)
     env = ExecutionEnv(gpu=gpu, cpu=cpu, disk=disk, mixed=TorchMixedDevice([gpu, cpu, disk]))
 
-    print("args.compress_weight:", args.compress_weight)
-    print("args.compress_cache:", args.compress_cache)
     policy = Policy(args.gpu_batch_size, args.num_gpu_batches,
                     args.percent[0], args.percent[1],
                     args.percent[2], args.percent[3],
@@ -391,9 +389,8 @@ def run_flexgen(args):
         outputs = tokenizer.batch_decode(output_ids, skip_special_tokens=True)
         show_str = "Outputs:\n" + 70 * '-' + "\n"
         # for i in [0, len(outputs)-1]:
-        for i in [0]:
-            show_str += f"{i}: {outputs[i]}\n"
-            show_str += "-" * 70 + "\n"
+        show_str += f"{0}: {outputs[0]}\n"
+        show_str += "-" * 70 + "\n"
         if args.verbose >= 2:
             print(show_str)
 
@@ -405,14 +402,44 @@ def run_flexgen(args):
         filename = get_filename(args) + ".log"
     else:
         filename = datetime.now().strftime("%Y-%m-%d_%H-%M-%S") + ".log"
-        filename = args.log_file_dir + filename
+        filename = args.log_file_dir + "/" + filename
 
-    log_str = write_benchmark_log(filename,
-        llama_config.model_bytes(), cache_size, hidden_size,
-        gpu_peak_mem, projected, prefill_latency, prefill_throughput,
-        decode_latency, decode_throughput, total_latency, total_throughput)
+    model_size = llama_config.model_bytes()
+    prompt_len = len(inputs[0])
+    eval_len = len(output_ids[0]) - prompt_len
+    prefill_speed = num_prompts * prompt_len / prefill_latency
+    decode_speed = num_prompts * eval_len / decode_latency
+    all_content = outputs[0]
+    generate_content = all_content[prompt_len:]
+
+    log_str = (f"model size: {model_size/GB:.3f} GB\t"
+                f"cache size: {cache_size/GB:.3f} GB\t"
+                f"hidden size (p): {hidden_size/GB:.3f} GB\n"
+                f"peak gpu mem: {gpu_peak_mem / GB:.3f} GB\t"
+                f"peak cpu mem: {cpu_peak_mem / GB:.3f} GB\n"
+                "\n"
+                f"prompt len: {prompt_len}\n"
+                f"eval len: {eval_len}\n"
+                f"prefill speed: {prefill_speed:.3f} token/s\n"
+                f"decode speed: {decode_speed:.3f} token/s\n"
+                "\n"
+                f"prefill latency: {prefill_latency:.3f} s\t"
+                f"prefill throughput: {prefill_throughput:.3f} token/s\n"
+                f"decode latency: {decode_latency:.3f} s\t"
+                f"decode throughput: {decode_throughput:.3f} token/s\n"
+                f"total latency: {total_latency:.3f} s\t"
+                f"total throughput: {total_throughput:.3f} token/s\n"
+                "\n"
+                f"generate content: {generate_content}\n"
+                f"all content: {all_content}\n"
+            )
+    with open(filename, "a") as fout:
+        fout.write(log_str + "\n")
+
     if args.verbose >= 1:
         print(log_str)
+
+    print(filename)
 
 
 def add_parser_arguments(parser):

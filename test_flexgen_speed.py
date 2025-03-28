@@ -5,9 +5,10 @@ from datetime import datetime
 
 # model = "llama-3.1-8b-instruct"
 model = "llama-3.2-3b-instruct"
-offload_disk = True
+offload_disk = False
+# offload_disk = True
 input_folder = '/mnt/LongBench-v2/extracted_contexts/'
-output_folder = f'/mnt/FlexGen/test_output_cuda/{model}/'
+output_folder = f'/mnt/FlexGen/aaa_test_output_cuda/{model}/'
 
 def run_llama_cli(file_path, prompt_len, output_path):
     env = os.environ.copy()
@@ -26,16 +27,16 @@ def run_llama_cli(file_path, prompt_len, output_path):
         "--prompt-len", str(prompt_len),
         "--gen-len", "10",
         "--gpu-batch-size", "1",
-        "--percent", "100", "0", "0", str(prompt_len), "100", "0", 
+        "--percent", "100", "0", "0", str(cpu_percent), "100", "0", 
         "--attn-sparsity", "0.1",
-        "--log-file-dir", output_folder,
+        "--log-file-dir", output_path,
     ]
 
     if model == "llama-3.1-8b-instruct":
         command += ["--compress-weight"]
 
+    print(f"Running command: {' '.join(command)}")
     result = subprocess.run(command, capture_output=True, text=True, env=env)
-    print(result)
 
 lengths = [\
             1000, \
