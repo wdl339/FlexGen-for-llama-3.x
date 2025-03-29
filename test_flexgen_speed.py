@@ -25,33 +25,35 @@ def run_llama_cli(file_path, prompt_len, output_path):
         "--offload-dir", "/mnt/FlexGen/offload_dir", 
         "--file", file_path,
         "--prompt-len", str(prompt_len),
-        "--gen-len", "10",
+        "--gen-len", "512",
         "--gpu-batch-size", "1",
         "--percent", "100", "0", "0", str(cpu_percent), "100", "0", 
         "--attn-sparsity", "0.1",
         "--log-file-dir", output_path,
+        "--compress-weight"
     ]
-
-    if model == "llama-3.1-8b-instruct":
-        command += ["--compress-weight"]
 
     print(f"Running command: {' '.join(command)}")
     result = subprocess.run(command, capture_output=True, text=True, env=env)
 
 lengths = [\
             1000, \
-            # 2000, \
-            # 4000, \
-            # 8000, \
-            # 16000, \
-            # 32000, \
-            # 64000, \
-            # 128000, \
+            2000, \
+            4000, \
+            8000, \
+            16000, \
+            32000, \
+            64000, \
+            128000, \
 ]
 
 for length in lengths:
     length_folder = os.path.join(input_folder, f"context_{length}")
-    test_output_folder = os.path.join(output_folder, f"context_{length}")
+    if offload_disk:
+        test_output_folder = os.path.join(output_folder, f"offload_to_disk")
+    else:
+        test_output_folder = os.path.join(output_folder, f"offload_to_cpu")
+    test_output_folder = os.path.join(test_output_folder, f"context_{length}")
     if not os.path.exists(test_output_folder):
         os.makedirs(test_output_folder)
 

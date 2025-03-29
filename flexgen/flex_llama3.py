@@ -123,8 +123,9 @@ class LlamaOutputEmbed(OutputEmbed):
 
 
 class LlamaSelfAttention(SelfAttention):
-    def __init__(self, config, env, policy, layer_id):
+    def __init__(self, config, env, policy, layer_id, prefill_batch_size):
         super().__init__(config, env, policy, layer_id)
+        self.prefill_batch_size = prefill_batch_size
 
     def init_weight(self, weight_home, path):
         h, n_head, n_kv_head, dtype = (self.config.input_dim, self.config.n_head, self.config.num_key_value_heads, self.config.dtype)
@@ -176,9 +177,14 @@ class LlamaSelfAttention(SelfAttention):
         if i == 0:  # prefill
             mask, donate[1] = attention_mask.val.smart_copy(self.compute)
             position_ids = torch.cumsum(mask.data, dim=1).int() * mask.data + 1
-            h, new_k_cache, new_v_cache = self.compute.llama_mha(h, position_ids, mask, w_ln,
-                w_q, w_k, w_v, w_o, n_head, n_kv_head, donate, self.config.rms_norm_eps,
-                self.policy.compress_cache, self.policy.comp_cache_config)
+            if self.prefill_batch_size == 0:
+                h, new_k_cache, new_v_cache = self.compute.llama_mha(h, position_ids, mask, w_ln,
+                    w_q, w_k, w_v, w_o, n_head, n_kv_head, donate, self.config.rms_norm_eps,
+                    self.policy.compress_cache, self.policy.comp_cache_config)
+            else:
+                h, new_k_cache, new_v_cache = self.compute.llama_mha_batched(h, position_ids, mask, w_ln,
+                    w_q, w_k, w_v, w_o, n_head, n_kv_head, donate, self.config.rms_norm_eps,
+                    self.policy.compress_cache, self.policy.comp_cache_config, batch_size=self.prefill_batch_size)
             cache_write_buf.store((new_k_cache, new_v_cache))
         else:  # decoding
             mask, donate[1] = attention_mask.val.smart_copy(self.attention_compute)
@@ -242,8 +248,8 @@ class LlamaMLP(MLP):
 
 
 class LlamaTransformerLayer(TransformerLayer):
-    def __init__(self, config, env, policy, i):
-        self.attention = LlamaSelfAttention(config, env, policy, i)
+    def __init__(self, config, env, policy, i, prefill_batch_size):
+        self.attention = LlamaSelfAttention(config, env, policy, i, prefill_batch_size)
         self.mlp = LlamaMLP(config, env, policy, i)
         self.policy = policy
         self.compute = self.attention.compute
@@ -254,7 +260,8 @@ class LlamaLM(OptLM):
                  config: Union[str, LlamaConfig],
                  env: ExecutionEnv,
                  path: str,
-                 policy: Policy):
+                 policy: Policy,
+                 prefill_batch_size: int = 0):
         if isinstance(config, str):
             config = get_llama_config(config)
         self.config = config
@@ -267,10 +274,10 @@ class LlamaLM(OptLM):
         layers.append(LlamaInputEmbed(self.config, self.env, self.policy))
         for i in range(self.config.num_hidden_layers):
             if policy.sep_layer:
-                layers.append(LlamaSelfAttention(self.config, self.env, self.policy, i))
+                layers.append(LlamaSelfAttention(self.config, self.env, self.policy, i, prefill_batch_size))
                 layers.append(LlamaMLP(self.config, self.env, self.policy, i))
             else:
-                layers.append(LlamaTransformerLayer(self.config, self.env, self.policy, i))
+                layers.append(LlamaTransformerLayer(self.config, self.env, self.policy, i, prefill_batch_size))
         layers.append(LlamaOutputEmbed(self.config, self.env, self.policy))
         self.layers = layers
         self.num_layers = len(layers)
@@ -355,7 +362,7 @@ def run_flexgen(args):
           f"hidden size (prefill): {hidden_size/GB:.3f} GB")
 
     print("init weight...")
-    model = LlamaLM(llama_config, env, args.path, policy)
+    model = LlamaLM(llama_config, env, args.path, policy, args.prefill_batch_size)
 
     try:
         print("warmup - generate")
@@ -420,17 +427,17 @@ def run_flexgen(args):
                 "\n"
                 f"prompt len: {prompt_len}\n"
                 f"eval len: {eval_len}\n"
-                f"prefill speed: {prefill_speed:.3f} token/s\n"
-                f"decode speed: {decode_speed:.3f} token/s\n"
+                f"prefill speed: {prefill_speed:.3f} tokens/s\n"
+                f"eval speed: {decode_speed:.3f} tokens/s\n"
                 "\n"
                 f"prefill latency: {prefill_latency:.3f} s\t"
-                f"prefill throughput: {prefill_throughput:.3f} token/s\n"
-                f"decode latency: {decode_latency:.3f} s\t"
-                f"decode throughput: {decode_throughput:.3f} token/s\n"
+                f"prefill throughput: {prefill_throughput:.3f} tokens/s\n"
+                f"eval latency: {decode_latency:.3f} s\t"
+                f"eval throughput: {decode_throughput:.3f} tokens/s\n"
                 f"total latency: {total_latency:.3f} s\t"
-                f"total throughput: {total_throughput:.3f} token/s\n"
+                f"total throughput: {total_throughput:.3f} tokens/s\n"
                 "\n"
-                f"generate content: {generate_content}\n"
+                f"generate content: {generate_content}\n\n"
                 f"all content: {all_content}\n"
             )
     with open(filename, "a") as fout:
@@ -438,8 +445,6 @@ def run_flexgen(args):
 
     if args.verbose >= 1:
         print(log_str)
-
-    print(filename)
 
 
 def add_parser_arguments(parser):
@@ -462,6 +467,7 @@ def add_parser_arguments(parser):
         choices=["fewer_batch", "breakdown"])
     parser.add_argument("--gpu-batch-size", type=int, default=4)
     parser.add_argument("--num-gpu-batches", type=int, default=1)
+    parser.add_argument("--prefill-batch-size", type=int, default=0)
     parser.add_argument("--percent", nargs="+", type=int,
         default=[100, 0, 100, 0, 100, 0],
         help="Six numbers. They are "

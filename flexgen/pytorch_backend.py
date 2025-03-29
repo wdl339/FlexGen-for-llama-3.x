@@ -1509,6 +1509,108 @@ class Llama3TorchDevice(TorchDevice):
         else:
             ids = last_token_logits.argmax(dim=1, keepdim=True)
         return TorchTensor.create_from_torch(ids, self)
+    
+    def llama_mha_batched(self, inputs, position_ids, attention_mask, w_ln, w_q, w_k, w_v,
+            w_out, n_head, n_kv_head, donate, eps, compress_cache, comp_config, batch_size=64):
+        """Multi-head attention (prefill phase) with batched processing to reduce memory usage."""
+        # decompress weights
+        if w_q.device.device_type == DeviceType.COMPRESSED:
+            w_q = w_q.device.decompress(w_q)
+            w_k = w_k.device.decompress(w_k)
+            w_v = w_v.device.decompress(w_v)
+            w_out = w_out.device.decompress(w_out)
+
+        b, s, h = inputs.shape
+        head_dim = h // n_head
+        scaling = head_dim ** -0.5
+
+        hidden = rms_norm(inputs.data, weight=w_ln.data, eps=eps)
+
+        # shape: (b, s, h)
+        q = F.linear(hidden, w_q.data) * scaling
+        k = F.linear(hidden, w_k.data)
+        v = F.linear(hidden, w_v.data)
+        # shape: (b, s, n_head, head_dim)
+        q = q.view(b, s, n_head, head_dim)
+        k = k.view(b, s, n_kv_head, head_dim)
+        v = v.view(b, s, n_kv_head, head_dim)
+
+        cos, sin = self.llama3_rotary_embedding(v, position_ids)
+        q, k = llama3_apply_rotary_pos_emb(q, k, cos, sin)
+
+        n_kv_groups = n_head // n_kv_head
+        k = repeat_kv(k, n_kv_groups)
+        v = repeat_kv(v, n_kv_groups)
+
+        # shape: (b * n_head, s, head_dim)
+        q = q.permute(0, 2, 1, 3).reshape(b * n_head, s, head_dim)
+        # shape: (b * n_head, head_dim, s)
+        k = k.permute(0, 2, 3, 1).reshape(b * n_head, head_dim, s)
+        # shape: (b * n_head, s, head_dim)
+        v = v.permute(0, 2, 1, 3).reshape(b * n_head, s, head_dim)
+
+        # Create output tensor
+        value_out = torch.zeros((b, s, h), dtype=inputs.data.dtype, device=self.dev)
+        
+        # Process in batches to reduce memory usage
+        num_batches = (s + batch_size - 1) // batch_size
+        
+        # Prepare causal mask once
+        idx = torch.arange(s, device=self.dev)
+        causal_mask = (idx <= idx.view(s, 1)).view(1, 1, s, s)
+        
+        for i in range(num_batches):
+            start_idx = i * batch_size
+            end_idx = min((i + 1) * batch_size, s)
+            current_len = end_idx - start_idx
+            
+            # Get the subset of q for this batch
+            q_batch = q[:, start_idx:end_idx, :]  # (b * n_head, current_len, head_dim)
+            
+            # Calculate attention weights for this batch
+            # shape: (b * n_head, current_len, s)
+            attn_weights = torch.bmm(q_batch, k)
+            
+            # Apply attention mask
+            # shape: (b, 1, current_len, s)
+            batch_mask = attention_mask.data.view(b, 1, 1, s) & causal_mask[:, :, start_idx:end_idx, :]
+            
+            # shape: (b, n_head, current_len, s)
+            attn_weights = attn_weights.view(b, n_head, current_len, s)
+            attn_weights = torch.where(batch_mask, attn_weights, -1e4)
+            attn_weights = attn_weights.view(b * n_head, current_len, s)
+            attn_weights = F.softmax(attn_weights, dim=2)
+            
+            # Calculate output values for this batch
+            # shape: (b, n_head, current_len, head_dim)
+            value_batch = torch.bmm(attn_weights, v).view(b, n_head, current_len, head_dim)
+            
+            # shape: (b, current_len, h)
+            value_batch = value_batch.transpose(1, 2).reshape(b, current_len, h)
+            value_batch = F.linear(value_batch, w_out.data)
+            
+            # Add to output
+            value_out[:, start_idx:end_idx, :] = value_batch + inputs.data[:, start_idx:end_idx, :]
+            
+            # Free memory
+            del attn_weights, value_batch
+            torch.cuda.empty_cache()
+
+        if donate[0]: inputs.delete()
+        if donate[1]: attention_mask.delete()
+
+        # (s, b * n_head, head_dim)
+        k = k.permute(2, 0, 1)
+        v = v.permute(1, 0, 2)
+
+        if compress_cache:
+            k = self.compressed_device.compress(k, comp_config)
+            v = self.compressed_device.compress(v, comp_config)
+        else:
+            k = TorchTensor.create_from_torch(k, self)
+            v = TorchTensor.create_from_torch(v, self)
+
+        return TorchTensor.create_from_torch(value_out, self), k, v
 
     def llama_mha(self, inputs, position_ids, attention_mask, w_ln, w_q, w_k, w_v,
             w_out, n_head, n_kv_head, donate, eps, compress_cache, comp_config):
