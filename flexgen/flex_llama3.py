@@ -417,7 +417,9 @@ def run_flexgen(args):
     prefill_speed = num_prompts * prompt_len / prefill_latency
     decode_speed = num_prompts * eval_len / decode_latency
     all_content = outputs[0]
-    generate_content = all_content[prompt_len:]
+    new_tokens = output_ids[0][len(inputs[0]):] 
+    generate_content_list = tokenizer.batch_decode(new_tokens, skip_special_tokens=True)
+    generate_content = ''.join(generate_content_list)
 
     log_str = (f"model size: {model_size/GB:.3f} GB\t"
                 f"cache size: {cache_size/GB:.3f} GB\t"
