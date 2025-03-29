@@ -71,6 +71,7 @@ class ExecutionEnv:
     cpu: Any = None
     disk: Any = None
     mixed: Any = None
+    clear_cache: bool = False
 
     @classmethod
     def create(cls, offload_dir):

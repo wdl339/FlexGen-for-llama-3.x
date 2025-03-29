@@ -16,7 +16,6 @@ from flexgen.timer import timers
 from flexgen.utils import (ExecutionEnv, GB, MB, ValueHolder, MemoryMonitor,
     array_1d, array_2d, str2bool, project_decode_latency)
 from datetime import datetime
-import subprocess
 
 fix_recursive_import()
 
@@ -340,7 +339,8 @@ def run_flexgen(args):
     gpu = Llama3TorchDevice("cuda:0", rope_config=llama_config.rope_config)
     cpu = Llama3TorchDevice("cpu", rope_config=llama_config.rope_config)
     disk = TorchDisk(args.offload_dir)
-    env = ExecutionEnv(gpu=gpu, cpu=cpu, disk=disk, mixed=TorchMixedDevice([gpu, cpu, disk]))
+    env = ExecutionEnv(gpu=gpu, cpu=cpu, disk=disk, mixed=TorchMixedDevice([gpu, cpu, disk]),
+                      clear_cache=args.clear_cache)
 
     policy = Policy(args.gpu_batch_size, args.num_gpu_batches,
                     args.percent[0], args.percent[1],
@@ -438,6 +438,7 @@ def run_flexgen(args):
                 f"peak gpu mem: {gpu_peak_mem / GB:.3f} GB\t"
                 f"peak cpu mem: {cpu_peak_mem / GB:.3f} GB\n"
                 "\n"
+                f"whether to clear page cache: {args.clear_cache}\n"
                 f"mem before init: {memory_before_init / GB:.3f} GB\t"
                 f"mem after init: {memory_after_init / GB:.3f} GB\t"
                 f"max mem used: {max_memory / GB:.3f} GB\n"
@@ -509,6 +510,8 @@ def add_parser_arguments(parser):
     parser.add_argument("--verbose", type=int, default=2)
     parser.add_argument("--overlap", type=str2bool, nargs='?',
         const=True, default=True)
+    parser.add_argument("--clear-cache", action="store_true",
+        help="Whether to clear page cache after each iteration.")
 
 
 if __name__ == "__main__":

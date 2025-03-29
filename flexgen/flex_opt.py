@@ -25,6 +25,8 @@ from flexgen.utils import (Task, ExecutionEnv, GB, T, ValueHolder,
     torch_mem_stats, torch_dtype_to_np_dtype, write_benchmark_log,
     read_benchmark_log)
 
+import subprocess
+
 fix_recursive_import()
 
 DUMMY_WEIGHT = "_DUMMY_"  # Use dummy weights for benchmark purposes
@@ -1027,6 +1029,11 @@ class OptLM:
                 self.store_hidden(i, j, 0)
                 self.sync()
             timers("generate").stop()
+            if self.env.clear_cache:
+                # print(f"generate {i} done")
+                subprocess.run(["sync"], check=True)
+                with open('/proc/sys/vm/drop_caches', 'w') as f:
+                    f.write('3')
 
             if self.task.stop and np.all(self.stopped):
                 break

@@ -3,6 +3,11 @@ import json
 import subprocess
 from datetime import datetime
 
+###
+# You should use sudo permissions to run this script (because of "--clear-cache")
+# sudo python3 /mnt/FlexGen/test_flexgen_speed.py
+###
+
 # model = "llama-3.1-8b-instruct"
 model = "llama-3.2-3b-instruct"
 offload_disk = False
@@ -27,14 +32,19 @@ def run_llama_cli(file_path, prompt_len, output_path):
         "--prompt-len", str(prompt_len),
         "--gen-len", "512",
         "--gpu-batch-size", "1",
+        "--prefill-batch-size", "512",
         "--percent", "100", "0", "0", str(cpu_percent), "100", "0", 
         "--attn-sparsity", "0.1",
         "--log-file-dir", output_path,
         "--compress-weight"
     ]
+    
+    if offload_disk:
+        command += ["--clear-cache"]
 
     print(f"Running command: {' '.join(command)}")
     result = subprocess.run(command, capture_output=True, text=True, env=env)
+    # print(result)
 
 lengths = [\
             1000, \
