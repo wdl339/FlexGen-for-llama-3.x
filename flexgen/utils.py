@@ -17,6 +17,39 @@ MB = 1 << 20
 GB = 1 << 30
 T = 1e12
 
+import psutil
+import threading
+import time
+
+class MemoryMonitor:
+    def __init__(self, interval=0.1):
+        self.max_memory = 0
+        self.stop_flag = False
+        self.interval = interval
+        self.process = psutil.Process()
+        
+    def monitor(self):
+        while not self.stop_flag:
+            current_memory = self.process.memory_info().rss
+            
+            if current_memory > self.max_memory:
+                self.max_memory = current_memory
+                
+            time.sleep(self.interval)
+    
+    def start(self):
+        self.monitor_thread = threading.Thread(target=self.monitor)
+        self.monitor_thread.daemon = True
+        self.monitor_thread.start()
+        
+    def get_cur_mem(self):
+        return self.process.memory_info().rss
+        
+    def stop(self):
+        self.stop_flag = True
+        if hasattr(self, 'monitor_thread'):
+            self.monitor_thread.join(timeout=1.0)
+        return self.max_memory
 
 @dataclasses.dataclass(frozen=True)
 class Task:

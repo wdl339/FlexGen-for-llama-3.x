@@ -13,9 +13,10 @@ from flexgen.pytorch_backend import Llama3TorchDevice, TorchDisk, TorchMixedDevi
 from flexgen.flex_opt import (Policy, init_weight_list, InputEmbed, OutputEmbed, SelfAttention, MLP,
                               TransformerLayer, OptLM, get_filename)
 from flexgen.timer import timers
-from flexgen.utils import (ExecutionEnv, GB, ValueHolder,
+from flexgen.utils import (ExecutionEnv, GB, MB, ValueHolder, MemoryMonitor,
     array_1d, array_2d, str2bool, project_decode_latency)
 from datetime import datetime
+import subprocess
 
 fix_recursive_import()
 
@@ -361,10 +362,18 @@ def run_flexgen(args):
           f"cache size: {cache_size/GB:.3f} GB, "
           f"hidden size (prefill): {hidden_size/GB:.3f} GB")
 
-    print("init weight...")
-    model = LlamaLM(llama_config, env, args.path, policy, args.prefill_batch_size)
 
+    memory_monitor = MemoryMonitor()
+    memory_monitor.start()
+    
     try:
+        memory_before_init = memory_monitor.get_cur_mem()
+        
+        print("init weight...")
+        model = LlamaLM(llama_config, env, args.path, policy, args.prefill_batch_size)
+        
+        memory_after_init = memory_monitor.get_cur_mem()
+
         print("warmup - generate")
         output_ids = model.generate(
             warmup_inputs, max_new_tokens=1, verbose=args.verbose)
@@ -377,6 +386,7 @@ def run_flexgen(args):
         costs = timers("generate").costs
     finally:
         env.close_copy_threads()
+        max_memory = memory_monitor.stop()
 
     # Log output
     prefill_latency = costs[0]
@@ -416,6 +426,7 @@ def run_flexgen(args):
     eval_len = len(output_ids[0]) - prompt_len
     prefill_speed = num_prompts * prompt_len / prefill_latency
     decode_speed = num_prompts * eval_len / decode_latency
+    
     all_content = outputs[0]
     new_tokens = output_ids[0][len(inputs[0]):] 
     generate_content_list = tokenizer.batch_decode(new_tokens, skip_special_tokens=True)
@@ -426,6 +437,10 @@ def run_flexgen(args):
                 f"hidden size (p): {hidden_size/GB:.3f} GB\n"
                 f"peak gpu mem: {gpu_peak_mem / GB:.3f} GB\t"
                 f"peak cpu mem: {cpu_peak_mem / GB:.3f} GB\n"
+                "\n"
+                f"mem before init: {memory_before_init / GB:.3f} GB\t"
+                f"mem after init: {memory_after_init / GB:.3f} GB\t"
+                f"max mem used: {max_memory / GB:.3f} GB\n"
                 "\n"
                 f"prompt len: {prompt_len}\n"
                 f"eval len: {eval_len}\n"
