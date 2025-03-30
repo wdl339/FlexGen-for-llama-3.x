@@ -8,12 +8,12 @@ import argparse
 from typing import Union
 from transformers import AutoTokenizer
 from flexgen.compression import CompressionConfig
-from flexgen.llama3_config import LlamaConfig, get_llama_config, download_llama_weights, RopeConfig
+from flexgen.llama3_config import LlamaConfig, get_llama_config, download_llama_weights
 from flexgen.pytorch_backend import Llama3TorchDevice, TorchDisk, TorchMixedDevice, fix_recursive_import
 from flexgen.flex_opt import (Policy, init_weight_list, InputEmbed, OutputEmbed, SelfAttention, MLP,
                               TransformerLayer, OptLM, get_filename)
 from flexgen.timer import timers
-from flexgen.utils import (ExecutionEnv, GB, MB, ValueHolder, MemoryMonitor,
+from flexgen.utils import (ExecutionEnv, GB, ValueHolder, MemoryMonitor,
     array_1d, array_2d, str2bool, project_decode_latency)
 from datetime import datetime
 
