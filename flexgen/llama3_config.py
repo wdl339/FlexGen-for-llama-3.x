@@ -63,7 +63,7 @@ class LlamaConfig:
 
 def get_llama_config(name, **kwargs):
     if "/" in name:
-        name = name.split("/")[2]
+        name = name.split("/")[-1]
 
     if "-chat" in name:
         arch_name = name.replace("-chat", "")

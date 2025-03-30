@@ -12,7 +12,7 @@ data = {
             "role": "user"
         }
     ],
-    "max_tokens": 10,
+    "max_tokens": 100,
     "n": 1,
     "logprobs": False,
     "top_logprobs": None,

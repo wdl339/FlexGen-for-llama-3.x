@@ -26,7 +26,7 @@ PERCENT = [100, 0, 100, 0, 100, 0]
 SEP_LAYER = True
 PIN_WEIGHT = True
 CPU_CACHE_COMPUTE = False
-ATTN_SPARSITY = 0.1
+ATTN_SPARSITY = 0.2
 COMPRESS_WEIGHT = False
 COMPRESS_CACHE = False
 VERBOSE = 2
@@ -69,20 +69,28 @@ def run_flexgen(chat, max_tokens):
     print("run_flexgen...")
     message = tokenizer.apply_chat_template(chat, tokenize=False)
     inputs = [message]
-    input_ids = tokenizer(inputs, add_special_tokens=False).input_ids
+    input_ids = tokenizer(inputs, add_special_tokens=False, return_tensors='pt').input_ids
     timers("generate").reset()
     output_ids = model.generate(
         (input_ids[0],) * num_prompts,
         max_new_tokens=max_tokens,
         debug_mode=DEBUG_MODE, 
         cut_gen_len=cut_gen_len, 
-        verbose=VERBOSE
+        verbose=VERBOSE,
+        stop=tokenizer.eos_token_id
     )
     print("finish generate")
 
-    result = tokenizer.batch_decode(output_ids, skip_special_tokens=False)[0]
+    result = tokenizer.batch_decode(output_ids, skip_special_tokens=False, clean_up_tokenization_spaces=False)[0]
+    
+    if "Answer:" in result:
+        result = result.split("Answer:", 1)[1]
+    
     return result.replace(message,"")\
                     .replace("<|start_header_id|>assistant<|end_header_id|>\n\n","")\
+                    .replace("<|start_header_id|>assistant<|end_header_id|>","")\
+                    .replace("<|start_header_id|>","")\
+                    .replace("<|end_header_id|>","")\
                     .replace("<|eot_id|>","")
 
 app = FastAPI()
