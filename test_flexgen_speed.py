@@ -5,11 +5,11 @@ from datetime import datetime
 
 ###
 # You should use sudo permissions to run this script (because of "--clear-cache")
-# sudo python3 /mnt/FlexGen/test_flexgen_speed.py
+# sudo -E python3 /mnt/FlexGen/test_flexgen_speed.py
 ###
 
-# model = "llama-3.1-8b-instruct"
-model = "llama-3.2-3b-instruct"
+model = "llama-3.1-8b-instruct"
+# model = "llama-3.2-3b-instruct"
 offload_disk = False
 # offload_disk = True
 input_folder = '/mnt/LongBench-v2/extracted_contexts/'
@@ -45,11 +45,12 @@ def run_llama_cli(file_path, prompt_len, output_path):
     print(f"Running command: {' '.join(command)}")
     result = subprocess.run(command, capture_output=True, text=True, env=env)
     # print(result)
+    return result
 
 lengths = [\
-            1000, \
-            2000, \
-            4000, \
+            # 1000, \
+            # 2000, \
+            # 4000, \
             8000, \
             16000, \
             32000, \
@@ -69,7 +70,7 @@ for length in lengths:
 
     test_case_num = 3
 
-    if length == 128000:
+    if length == 64000 or length == 128000:
         test_case_num = 2
 
     count = 0
@@ -77,6 +78,7 @@ for length in lengths:
         if filename.endswith('.txt'):
             count += 1
             file_path = os.path.join(length_folder, filename)
-            run_llama_cli(file_path, length, test_output_folder)
+            res = run_llama_cli(file_path, length, test_output_folder)
+            # print(res)
             if count >= test_case_num:
                 break
