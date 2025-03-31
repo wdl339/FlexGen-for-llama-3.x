@@ -159,7 +159,7 @@ class LlamaSelfAttention(SelfAttention):
 
         if i == 0:  # prefill
             mask, donate[1] = attention_mask.val.smart_copy(self.compute)
-            position_ids = torch.cumsum(mask.data, dim=1).int() * mask.data + 1
+            position_ids = torch.cumsum(mask.data, dim=1).int() * mask.data - 1
             h, new_k_cache, new_v_cache = self.compute.llama_mha(h, position_ids, mask, w_ln,
                 w_q, w_k, w_v, w_re, w_o, n_head, n_kv_head, donate, self.config.rms_norm_eps,
                 self.policy.compress_cache, self.policy.comp_cache_config)
@@ -167,7 +167,7 @@ class LlamaSelfAttention(SelfAttention):
         else:  # decoding
             mask, donate[1] = attention_mask.val.smart_copy(self.attention_compute)
             (k_cache, donate[8]), (v_cache, donate[9]) = cache_read_buf.pop()
-            position_ids = torch.cumsum(mask.data, dim=1).int() * mask.data + 1
+            position_ids = torch.cumsum(mask.data, dim=1).int() * mask.data - 1
             position_ids = position_ids[:, -h.shape[1]].unsqueeze(1)
             h, new_k_cache, new_v_cache = self.compute.llama_mha_gen(h, position_ids, mask, w_ln,
                 w_q, w_k, w_v, w_re, w_o, self.config.rms_norm_eps, n_head, n_kv_head,
