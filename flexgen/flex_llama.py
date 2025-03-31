@@ -9,7 +9,8 @@ from typing import Union
 from transformers import AutoTokenizer
 from flexgen.compression import CompressionConfig
 from flexgen.llama_config import LlamaConfig, get_llama_config, download_llama_weights
-from flexgen.pytorch_backend import LlamaTorchDevice, TorchDisk, TorchMixedDevice, fix_recursive_import
+from flexgen.pytorch_backend import TorchDisk, TorchMixedDevice
+from flexgen.llama_backend import LlamaTorchDevice, fix_recursive_import
 from flexgen.flex_opt import (Policy, init_weight_list, InputEmbed, OutputEmbed, SelfAttention, MLP,
                               TransformerLayer, OptLM, get_filename, get_test_inputs)
 from flexgen.timer import timers

@@ -10,7 +10,8 @@ from transformers import AutoTokenizer
 from flexgen.compression import CompressionConfig
 from flexgen.qwen_config import QwenConfig, get_qwen_config, download_qwen_weights
 from flexgen.flex_llama import LlamaInputEmbed, LlamaOutputEmbed, LlamaMLP
-from flexgen.pytorch_backend import QwenTorchDevice, TorchDisk, TorchMixedDevice, fix_recursive_import
+from flexgen.pytorch_backend import TorchDisk, TorchMixedDevice
+from flexgen.qwen_backend import QwenTorchDevice, fix_recursive_import
 from flexgen.flex_opt import (Policy, init_weight_list, SelfAttention, TransformerLayer,
                               OptLM, get_filename, get_test_inputs)
 from flexgen.timer import timers

@@ -48,9 +48,9 @@ def run_llama_cli(file_path, prompt_len, output_path):
     return result
 
 lengths = [\
-            # 1000, \
-            # 2000, \
-            # 4000, \
+            1000, \
+            2000, \
+            4000, \
             8000, \
             16000, \
             32000, \
