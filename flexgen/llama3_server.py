@@ -5,8 +5,8 @@ from flexgen.pytorch_backend import TorchDisk, TorchMixedDevice
 from flexgen.llama_backend import Llama3TorchDevice, fix_recursive_import
 from flexgen.flex_opt import Policy
 from flexgen.timer import timers
-from flexgen.utils import ExecutionEnv
-from flexgen.flex_llama3 import (get_test_inputs, LlamaLM)
+from flexgen.utils import ExecutionEnv, get_test_inputs
+from flexgen.flex_llama3 import LlamaLM
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Union

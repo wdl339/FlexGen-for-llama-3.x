@@ -352,24 +352,8 @@ def llama3_apply_rotary_pos_emb(q, k, cos, sin, unsqueeze_dim=2):
 class Llama3TorchDevice(TorchDevice):
 
     def __init__(self, name, mem_capacity=None, flops=None, rope_config=None):
-        self.name = name
-        self.mem_capacity = mem_capacity
-        self.flops = flops
-
-        self.dev = torch.device(name)
-        self.device_type = DeviceType.convert(self.dev.type)
-        self.compressed_device = TorchCompressedDevice(self)
-
-        self.links = {}
-
-        self.attention_compute_workspace = None
-        self.workspace_pt = 0
-
+        super().__init__(name, mem_capacity, flops)
         self.inv_freq = rope_init_fn(rope_config)
-
-        if self.device_type == DeviceType.CPU:
-            global global_cpu_device
-            global_cpu_device = self
 
     def llama3_rotary_embedding(self, x, position_ids):
         inv_freq = self.inv_freq

@@ -8,15 +8,16 @@ import argparse
 from typing import Union
 from transformers import AutoTokenizer
 from flexgen.compression import CompressionConfig
-from flexgen.qwen_config import QwenConfig, get_qwen_config, download_qwen_weights
+from flexgen.qwen2_config import QwenConfig, get_qwen_config, download_qwen_weights
 from flexgen.flex_llama import LlamaInputEmbed, LlamaOutputEmbed, LlamaMLP
 from flexgen.pytorch_backend import TorchDisk, TorchMixedDevice
 from flexgen.qwen_backend import QwenTorchDevice, fix_recursive_import
 from flexgen.flex_opt import (Policy, init_weight_list, SelfAttention, TransformerLayer,
-                              OptLM, get_filename, get_test_inputs)
+                              OptLM, get_filename)
 from flexgen.timer import timers
-from flexgen.utils import (ExecutionEnv, GB, ValueHolder,
-    array_1d, array_2d, str2bool, project_decode_latency, write_benchmark_log)
+from flexgen.utils import (ExecutionEnv, GB, ValueHolder, MemoryMonitor,
+    array_1d, array_2d, str2bool, project_decode_latency, get_test_inputs)
+from datetime import datetime
 
 fix_recursive_import()
 
@@ -24,8 +25,9 @@ DUMMY_WEIGHT = "_DUMMY_"  # Use dummy weights for benchmark purposes
 
 
 class QwenSelfAttention(SelfAttention):
-    def __init__(self, config, env, policy, layer_id):
+    def __init__(self, config, env, policy, layer_id, prefill_batch_size):
         super().__init__(config, env, policy, layer_id)
+        self.prefill_batch_size = prefill_batch_size
 
     def init_weight(self, weight_home, path):
         h, n_head, n_kv_head, dtype = (self.config.input_dim, self.config.n_head, self.config.num_key_value_heads, self.config.dtype)
@@ -83,9 +85,14 @@ class QwenSelfAttention(SelfAttention):
         if i == 0:  # prefill
             mask, donate[1] = attention_mask.val.smart_copy(self.compute)
             position_ids = torch.cumsum(mask.data, dim=1).int() * mask.data + 1
-            h, new_k_cache, new_v_cache = self.compute.qwen_mha(h, position_ids, mask, w_ln,
-                w_q, b_q, w_k, b_k, w_v, b_v, w_o, n_head, n_kv_head, donate, self.config.rms_norm_eps, self.config.rope_theta,
-                self.policy.compress_cache, self.policy.comp_cache_config)
+            if self.prefill_batch_size == 0:
+                h, new_k_cache, new_v_cache = self.compute.qwen_mha(h, position_ids, mask, w_ln,
+                    w_q, b_q, w_k, b_k, w_v, b_v, w_o, n_head, n_kv_head, donate, self.config.rms_norm_eps, self.config.rope_theta,
+                    self.policy.compress_cache, self.policy.comp_cache_config)
+            else:
+                h, new_k_cache, new_v_cache = self.compute.qwen_mha_batched(h, position_ids, mask, w_ln,
+                    w_q, b_q, w_k, b_k, w_v, b_v, w_o, n_head, n_kv_head, donate, self.config.rms_norm_eps, self.config.rope_theta,
+                    self.policy.compress_cache, self.policy.comp_cache_config, batch_size=self.prefill_batch_size)
             cache_write_buf.store((new_k_cache, new_v_cache))
         else:  # decoding
             mask, donate[1] = attention_mask.val.smart_copy(self.attention_compute)
@@ -114,7 +121,8 @@ class QwenLM(OptLM):
                  config: Union[str, QwenConfig],
                  env: ExecutionEnv,
                  path: str,
-                 policy: Policy):
+                 policy: Policy,
+                 prefill_batch_size: int = 0):
         if isinstance(config, str):
             config = get_qwen_config(config)
         self.config = config
@@ -127,10 +135,10 @@ class QwenLM(OptLM):
         layers.append(LlamaInputEmbed(self.config, self.env, self.policy))
         for i in range(self.config.num_hidden_layers):
             if policy.sep_layer:
-                layers.append(QwenSelfAttention(self.config, self.env, self.policy, i))
+                layers.append(QwenSelfAttention(self.config, self.env, self.policy, i, prefill_batch_size))
                 layers.append(LlamaMLP(self.config, self.env, self.policy, i))
             else:
-                layers.append(QwenTransformerLayer(self.config, self.env, self.policy, i))
+                layers.append(QwenTransformerLayer(self.config, self.env, self.policy, i, prefill_batch_size))
         layers.append(LlamaOutputEmbed(self.config, self.env, self.policy))
         self.layers = layers
         self.num_layers = len(layers)
@@ -185,12 +193,15 @@ def run_flexgen(args):
 
     # Task and policy
     warmup_inputs = get_test_inputs(32, num_prompts, tokenizer)
-    inputs = get_test_inputs(prompt_len, num_prompts, tokenizer)
+    inputs = get_test_inputs(prompt_len, num_prompts, tokenizer, args.file)
+
+    qwen_config = get_qwen_config(args.model, pad_token_id=tokenizer.eos_token_id)
 
     gpu = QwenTorchDevice("cuda:0")
     cpu = QwenTorchDevice("cpu")
     disk = TorchDisk(args.offload_dir)
-    env = ExecutionEnv(gpu=gpu, cpu=cpu, disk=disk, mixed=TorchMixedDevice([gpu, cpu, disk]))
+    env = ExecutionEnv(gpu=gpu, cpu=cpu, disk=disk, mixed=TorchMixedDevice([gpu, cpu, disk]),
+                      clear_cache=args.clear_cache)
 
     policy = Policy(args.gpu_batch_size, args.num_gpu_batches,
                     args.percent[0], args.percent[1],
@@ -206,17 +217,24 @@ def run_flexgen(args):
                                       group_dim=2, symmetric=False))
     assert not (args.compress_cache and args.attn_sparsity < 1.0), "Not implemented"
 
-    qwen_config = get_qwen_config(args.model, pad_token_id=tokenizer.eos_token_id)
     cache_size = qwen_config.cache_bytes(num_prompts, prompt_len + gen_len)
     hidden_size = qwen_config.hidden_bytes(num_prompts, prompt_len + gen_len)
     print(f"model size: {qwen_config.model_bytes()/GB:.3f} GB, "
           f"cache size: {cache_size/GB:.3f} GB, "
           f"hidden size (prefill): {hidden_size/GB:.3f} GB")
 
-    print("init weight...")
-    model = QwenLM(qwen_config, env, args.path, policy)
 
+    memory_monitor = MemoryMonitor()
+    memory_monitor.start()
+    
     try:
+        memory_before_init = memory_monitor.get_cur_mem()
+        
+        print("init weight...")
+        model = QwenLM(qwen_config, env, args.path, policy, args.prefill_batch_size)
+        
+        memory_after_init = memory_monitor.get_cur_mem()
+
         print("warmup - generate")
         output_ids = model.generate(
             warmup_inputs, max_new_tokens=1, verbose=args.verbose)
@@ -229,6 +247,7 @@ def run_flexgen(args):
         costs = timers("generate").costs
     finally:
         env.close_copy_threads()
+        max_memory = memory_monitor.stop()
 
     # Log output
     prefill_latency = costs[0]
@@ -247,9 +266,9 @@ def run_flexgen(args):
     if DUMMY_WEIGHT not in args.path:
         outputs = tokenizer.batch_decode(output_ids, skip_special_tokens=True)
         show_str = "Outputs:\n" + 70 * '-' + "\n"
-        for i in [0, len(outputs)-1]:
-            show_str += f"{i}: {outputs[i]}\n"
-            show_str += "-" * 70 + "\n"
+        # for i in [0, len(outputs)-1]:
+        show_str += f"{0}: {outputs[0]}\n"
+        show_str += "-" * 70 + "\n"
         if args.verbose >= 2:
             print(show_str)
 
@@ -257,15 +276,52 @@ def run_flexgen(args):
     cpu.print_stats()
     projected = bool(args.debug_mode or cut_gen_len)
 
-    if args.log_file == "auto":
+    if args.log_file_dir == "auto":
         filename = get_filename(args) + ".log"
     else:
-        filename = args.log_file
+        filename = datetime.now().strftime("%Y-%m-%d_%H-%M-%S") + ".log"
+        filename = args.log_file_dir + "/" + filename
 
-    log_str = write_benchmark_log(filename,
-        qwen_config.model_bytes(), cache_size, hidden_size,
-        gpu_peak_mem, projected, prefill_latency, prefill_throughput,
-        decode_latency, decode_throughput, total_latency, total_throughput)
+    model_size = qwen_config.model_bytes()
+    prompt_len = len(inputs[0])
+    eval_len = len(output_ids[0]) - prompt_len
+    prefill_speed = num_prompts * prompt_len / prefill_latency
+    decode_speed = num_prompts * eval_len / decode_latency
+    
+    all_content = outputs[0]
+    new_tokens = output_ids[0][len(inputs[0]):] 
+    generate_content_list = tokenizer.batch_decode(new_tokens, skip_special_tokens=True)
+    generate_content = ''.join(generate_content_list)
+
+    log_str = (f"model size: {model_size/GB:.3f} GB\t"
+                f"cache size: {cache_size/GB:.3f} GB\t"
+                f"hidden size (p): {hidden_size/GB:.3f} GB\n"
+                f"peak gpu mem: {gpu_peak_mem / GB:.3f} GB\t"
+                f"peak cpu mem: {cpu_peak_mem / GB:.3f} GB\n"
+                "\n"
+                f"whether to clear page cache: {args.clear_cache}\n"
+                f"mem before init: {memory_before_init / GB:.3f} GB\t"
+                f"mem after init: {memory_after_init / GB:.3f} GB\t"
+                f"max mem used: {max_memory / GB:.3f} GB\n"
+                "\n"
+                f"prompt len: {prompt_len}\n"
+                f"eval len: {eval_len}\n"
+                f"prefill speed: {prefill_speed:.3f} tokens/s\n"
+                f"eval speed: {decode_speed:.3f} tokens/s\n"
+                "\n"
+                f"prefill latency: {prefill_latency:.3f} s\t"
+                f"prefill throughput: {prefill_throughput:.3f} tokens/s\n"
+                f"eval latency: {decode_latency:.3f} s\t"
+                f"eval throughput: {decode_throughput:.3f} tokens/s\n"
+                f"total latency: {total_latency:.3f} s\t"
+                f"total throughput: {total_throughput:.3f} tokens/s\n"
+                "\n"
+                f"generate content: {generate_content}\n\n"
+                f"all content: {all_content}\n"
+            )
+    with open(filename, "a") as fout:
+        fout.write(log_str + "\n")
+
     if args.verbose >= 1:
         print(log_str)
 
@@ -278,6 +334,8 @@ def add_parser_arguments(parser):
              "FlexGen will automatically download them from HuggingFace.")
     parser.add_argument("--offload-dir", type=str, default="~/flexgen_offload_dir",
         help="The directory to offload tensors. ")
+    parser.add_argument("--file", type=str, default="",
+        help="prompt file")
     parser.add_argument("--prompt-len", type=int, default=512)
     parser.add_argument("--gen-len", type=int, default=32)
     parser.add_argument("--cut-gen-len", type=int,
@@ -286,6 +344,7 @@ def add_parser_arguments(parser):
         choices=["fewer_batch", "breakdown"])
     parser.add_argument("--gpu-batch-size", type=int, default=4)
     parser.add_argument("--num-gpu-batches", type=int, default=1)
+    parser.add_argument("--prefill-batch-size", type=int, default=0)
     parser.add_argument("--percent", nargs="+", type=int,
         default=[100, 0, 100, 0, 100, 0],
         help="Six numbers. They are "
@@ -305,12 +364,13 @@ def add_parser_arguments(parser):
         help="Whether to compress weight.")
     parser.add_argument("--compress-cache", action="store_true",
         help="Whether to compress cache.")
-    parser.add_argument("--log-file", type=str, default="auto")
+    parser.add_argument("--log-file-dir", type=str, default="auto")
     parser.add_argument("--no-log", action="store_true")
     parser.add_argument("--verbose", type=int, default=2)
     parser.add_argument("--overlap", type=str2bool, nargs='?',
         const=True, default=True)
-
+    parser.add_argument("--clear-cache", action="store_true",
+        help="Whether to clear page cache after each iteration.")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
