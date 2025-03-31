@@ -84,7 +84,7 @@ class QwenSelfAttention(SelfAttention):
 
         if i == 0:  # prefill
             mask, donate[1] = attention_mask.val.smart_copy(self.compute)
-            position_ids = torch.cumsum(mask.data, dim=1).int() * mask.data + 1
+            position_ids = torch.cumsum(mask.data, dim=1).int() * mask.data - 1
             if self.prefill_batch_size == 0:
                 h, new_k_cache, new_v_cache = self.compute.qwen_mha(h, position_ids, mask, w_ln,
                     w_q, b_q, w_k, b_k, w_v, b_v, w_o, n_head, n_kv_head, donate, self.config.rms_norm_eps, self.config.rope_theta,
@@ -97,7 +97,7 @@ class QwenSelfAttention(SelfAttention):
         else:  # decoding
             mask, donate[1] = attention_mask.val.smart_copy(self.attention_compute)
             (k_cache, donate[10]), (v_cache, donate[11]) = cache_read_buf.pop()
-            position_ids = torch.cumsum(mask.data, dim=1).int() * mask.data + 1
+            position_ids = torch.cumsum(mask.data, dim=1).int() * mask.data - 1
             position_ids = position_ids[:, -h.shape[1]].unsqueeze(1)
             h, new_k_cache, new_v_cache = self.compute.qwen_mha_gen(h, position_ids, mask, w_ln,
                 w_q, b_q, w_k, b_k, w_v, b_v, w_o, self.config.rms_norm_eps, self.config.rope_theta, n_head, n_kv_head,
