@@ -36,4 +36,5 @@ today_job.sh
 
 opt_weights
 llama_weights
+qwen_weights
 offload_dir

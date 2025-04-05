@@ -19,10 +19,10 @@ import threading
 fix_recursive_import()
 
 # MODEL = "/disk2/wdl/llama-3.2-3b-instruct"
-MODEL = "/disk2/wdl/llama-3.1-8b-instruct"
-PATH = "/disk2/wdl/FlexGen/llama_weights"
-# MODEL = "/disk2/wdl/qwen-2.5-7b-instruct"
-# PATH = "/disk2/wdl/FlexGen/qwen_weights"
+# MODEL = "/disk2/wdl/llama-3.1-8b-instruct"
+# PATH = "/disk2/wdl/FlexGen/llama_weights"
+MODEL = "/disk2/wdl/qwen-2.5-7b-instruct"
+PATH = "/disk2/wdl/FlexGen/qwen_weights"
 OFFLOAD_DIR = "/disk2/wdl/FlexGen/offload_dir"
 CUT_GEN_LEN = None
 DEBUG_MODE = None
@@ -34,7 +34,7 @@ SEP_LAYER = True
 PIN_WEIGHT = True
 CPU_CACHE_COMPUTE = False
 ATTN_SPARSITY = 0.1
-COMPRESS_WEIGHT = False
+COMPRESS_WEIGHT = True
 COMPRESS_CACHE = False
 VERBOSE = 2
 OVERLAP = True
@@ -50,8 +50,8 @@ if "llama" in MODEL:
     cpu = Llama3TorchDevice("cpu", rope_config=model_config.rope_config)
 elif "qwen" in MODEL:
     model_config = get_qwen_config(MODEL, pad_token_id=tokenizer.eos_token_id)
-    gpu = QwenTorchDevice("cuda:0", rope_config=model_config.rope_config)
-    cpu = QwenTorchDevice("cpu", rope_config=model_config.rope_config)
+    gpu = QwenTorchDevice("cuda:0")
+    cpu = QwenTorchDevice("cpu")
 
 disk = TorchDisk(OFFLOAD_DIR)
 env = ExecutionEnv(gpu=gpu, cpu=cpu, disk=disk, mixed=TorchMixedDevice([gpu, cpu, disk]),
@@ -82,7 +82,7 @@ model.generate(warmup_inputs, max_new_tokens=1, verbose=VERBOSE)
 
 def run_flexgen(chat, max_tokens):
     print("run_flexgen...")
-    message = tokenizer.apply_chat_template(chat, tokenize=False)
+    message = tokenizer.apply_chat_template(chat, tokenize=False, add_generation_prompt=True)
     inputs = [message]
     input_ids = tokenizer(inputs, add_special_tokens=False, return_tensors='pt').input_ids
     timers("generate").reset()
@@ -109,7 +109,11 @@ def run_flexgen(chat, max_tokens):
                     .replace("<|start_header_id|>\n\n","")\
                     .replace("<|start_header_id|>","")\
                     .replace("<|end_header_id|>","")\
-                    .replace("<|eot_id|>","")
+                    .replace("<|eot_id|>","")\
+                    .replace("<|endoftext|>","")\
+                    .replace("<|im_start|>","")\
+                    .replace("<|im_end|>","")
+                    
 
 app = FastAPI()
 lock = threading.Lock()
