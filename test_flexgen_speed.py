@@ -8,13 +8,11 @@ from datetime import datetime
 # sudo -E python3 /mnt/FlexGen/test_flexgen_speed.py
 ###
 
-model = "qwen-2.5-7b-instruct"
+# model = "qwen-2.5-7b-instruct"
 # model = "llama-3.1-8b-instruct"
 # model = "llama-3.2-3b-instruct"
-input_folder = '/mnt/LongBench-v2/extracted_contexts/'
-output_folder = f'/mnt/FlexGen/aaa_test_output_cuda/{model}/'
 
-def run_llama_cli(file_path, prompt_len, output_path, offload_to_disk):
+def run_llama_cli(file_path, prompt_len, output_path, offload_to_disk, prefill_batch_size=512):
     env = os.environ.copy()
 
     project = "flexgen.flex_llama3"
@@ -37,7 +35,7 @@ def run_llama_cli(file_path, prompt_len, output_path, offload_to_disk):
         "--prompt-len", str(prompt_len),
         "--gen-len", "512",
         "--gpu-batch-size", "1",
-        "--prefill-batch-size", "512",
+        "--prefill-batch-size", str(prefill_batch_size),
         "--percent", "100", "0", "0", str(cpu_percent), "100", "0", 
         "--attn-sparsity", "0.1",
         "--log-file-dir", output_path,
@@ -53,38 +51,50 @@ def run_llama_cli(file_path, prompt_len, output_path, offload_to_disk):
     return result
 
 lengths = [\
-            1000, \
-            2000, \
-            4000, \
-            8000, \
+            # 1000, \
+            # 2000, \
+            # 4000, \
+            # 8000, \
             16000, \
             32000, \
             64000, \
             128000, \
 ]
 
-for offload_disk in [False, True]:
-    for length in lengths:
-        length_folder = os.path.join(input_folder, f"context_{length}")
-        if offload_disk:
-            test_output_folder = os.path.join(output_folder, f"offload_to_disk")
-        else:
-            test_output_folder = os.path.join(output_folder, f"offload_to_cpu")
-        test_output_folder = os.path.join(test_output_folder, f"context_{length}")
-        if not os.path.exists(test_output_folder):
-            os.makedirs(test_output_folder)
+for model in [
+    "llama-3.1-8b-instruct", 
+    # "llama-3.2-3b-instruct",
+    "qwen-2.5-7b-instruct"
+    ]:
+    for offload_disk in [False, True]:
+        for length in lengths:
+            input_folder = '/mnt/LongBench-v2/extracted_contexts/'
+            output_folder = f'/mnt/FlexGen/aaa_test_output_cuda/{model}/'
+            length_folder = os.path.join(input_folder, f"context_{length}")
+            if offload_disk:
+                test_output_folder = os.path.join(output_folder, f"offload_to_disk")
+            else:
+                test_output_folder = os.path.join(output_folder, f"offload_to_cpu")
+            test_output_folder = os.path.join(test_output_folder, f"context_{length}")
+            if not os.path.exists(test_output_folder):
+                os.makedirs(test_output_folder)
 
-        test_case_num = 3
+            test_case_num = 3
+            prefill_batch_size = 512
 
-        if length == 64000 or length == 128000:
-            test_case_num = 2
+            if length == 64000 or length == 128000:
+                test_case_num = 2
+                
+            if model == "llama-3.1-8b-instruct" or model == "qwen-2.5-7b-instruct":
+                if length >= 16000:
+                    prefill_batch_size = 64
 
-        count = 0
-        for filename in os.listdir(length_folder):
-            if filename.endswith('.txt'):
-                count += 1
-                file_path = os.path.join(length_folder, filename)
-                res = run_llama_cli(file_path, length, test_output_folder, offload_disk)
-                # print(res)
-                if count >= test_case_num:
-                    break
+            count = 0
+            for filename in os.listdir(length_folder):
+                if filename.endswith('.txt'):
+                    count += 1
+                    file_path = os.path.join(length_folder, filename)
+                    res = run_llama_cli(file_path, length, test_output_folder, offload_disk, prefill_batch_size)
+                    # print(res)
+                    if count >= test_case_num:
+                        break

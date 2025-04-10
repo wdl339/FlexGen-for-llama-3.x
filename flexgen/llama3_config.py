@@ -46,7 +46,7 @@ class LlamaConfig:
         return 2 * (self.vocab_size * h +
         self.num_hidden_layers * (
         # self-attention
-        h * h + 2 * h * h / (self.n_head / self.num_key_value_heads) + h * h + head_dim // 2 +
+        h * h + 2 * h * h / (self.n_head / self.num_key_value_heads) + h * h +
         # mlp
         3 * h * intermediate +
         # layer norm
@@ -55,10 +55,10 @@ class LlamaConfig:
         h + self.vocab_size * h)
 
     def cache_bytes(self, batch_size, seq_len):
-        return 2 * batch_size * seq_len * self.num_hidden_layers * self.input_dim / (self.n_head / self.num_key_value_heads) * 2
+        return 2 * batch_size * seq_len * self.num_hidden_layers * self.input_dim * 2
 
     def hidden_bytes(self, batch_size, seq_len):
-        return batch_size * seq_len * self.input_dim * 2
+        return 2 * batch_size * seq_len * self.input_dim
 
 
 def get_llama_config(name, **kwargs):
