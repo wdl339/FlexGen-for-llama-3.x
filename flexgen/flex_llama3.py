@@ -371,7 +371,8 @@ def run_flexgen(args):
         timers("generate").reset()
         output_ids = model.generate(
             inputs, max_new_tokens=args.gen_len,
-            debug_mode=args.debug_mode, cut_gen_len=cut_gen_len, verbose=args.verbose)
+            debug_mode=args.debug_mode, cut_gen_len=cut_gen_len, 
+            verbose=args.verbose, csv_file=args.csv_file)
         costs = timers("generate").costs
     finally:
         env.close_copy_threads()
@@ -501,6 +502,7 @@ def add_parser_arguments(parser):
         const=True, default=True)
     parser.add_argument("--clear-cache", action="store_true",
         help="Whether to clear page cache after each iteration.")
+    parser.add_argument("--csv-file", type=str, default="auto")
 
 
 if __name__ == "__main__":

@@ -24,6 +24,7 @@ from flexgen.utils import (Task, ExecutionEnv, GB, T, ValueHolder,
     array_1d, array_2d, array_3d, str2bool, project_decode_latency,
     torch_mem_stats, torch_dtype_to_np_dtype, write_benchmark_log,
     read_benchmark_log)
+import csv
 
 import subprocess
 
@@ -795,6 +796,15 @@ class OptLM:
     def sync(self):
         self.env.disk.synchronize()
         torch.cuda.synchronize()
+        
+    def sync_csv(self, csv_writer, i, j, k):
+        sync_start_time = time.time()
+        self.env.disk.synchronize()
+        sync_end_time = time.time()
+        sync_time = sync_end_time - sync_start_time
+        if csv_writer != None:
+            csv_writer.writerow([i, j, k, sync_time])
+        torch.cuda.synchronize()
 
     def init_all_weights(self):
         self.weight_home = array_1d(self.num_layers, ValueHolder)
@@ -832,7 +842,9 @@ class OptLM:
                  stop: Optional[int] = None,
                  debug_mode: Optional[str] = None,
                  cut_gen_len: Optional[int] = None,
-                 verbose: int = 0):
+                 verbose: int = 0,
+                 csv_file: Optional[str] = None,
+                 ):
         task = Task(
             inputs=inputs,
             prompt_len=len(inputs[0]),
@@ -887,9 +899,15 @@ class OptLM:
             else:
                 # Overlap I/O and compute
                 if num_gpu_batches == 1:
-                    self.generation_loop_overlap_single_batch()
+                    if csv_file is not None and csv_file != "auto":
+                        self.generation_loop_overlap_single_batch_csv(csv_file)
+                    else:
+                        self.generation_loop_overlap_single_batch()
                 else:
-                    self.generation_loop_overlap_multi_batch()
+                    if csv_file is not None and csv_file != "auto":
+                        self.generation_loop_overlap_multi_batch_csv(csv_file)
+                    else:
+                        self.generation_loop_overlap_multi_batch()
         elif debug_mode == "fewer_batch":
             # Run fewer layeres and batches for debugging
             if num_gpu_batches == 1:
@@ -1037,6 +1055,38 @@ class OptLM:
 
             if self.task.stop and np.all(self.stopped):
                 break
+            
+    def generation_loop_overlap_single_batch_csv(self, csv_file_path):
+        with open(csv_file_path, mode="w", newline="") as csv_file:
+            csv_writer = csv.writer(csv_file)
+            csv_writer.writerow(["i", "j", "k", "sync_time"])
+            
+            # Prologue
+            for k in range(self.num_gpu_batches):
+                self.load_weight(0, 0, k)
+            self.sync()
+
+            # Generate
+            for i in range(self.execute_gen_len):
+                timers("generate").start()
+                self.update_attention_mask(i, 0)
+                for j in range(self.num_layers):
+                    self.load_weight(i, j+1, 0)
+                    self.load_cache(i, j+1, 0)
+                    self.load_hidden(i, j, 0)
+                    self.compute_layer(i, j, 0)
+                    self.store_cache(i, j-1, 0)
+                    self.store_hidden(i, j, 0)
+                    self.sync_csv(csv_writer=csv_writer, i=i, j=j, k=k)
+                timers("generate").stop()
+                if self.env.clear_cache:
+                    # print(f"generate {i} done")
+                    subprocess.run(["sync"], check=True)
+                    with open('/proc/sys/vm/drop_caches', 'w') as f:
+                        f.write('3')
+
+                if self.task.stop and np.all(self.stopped):
+                    break
 
     def generation_loop_overlap_multi_batch(self):
         # Prologue
@@ -1064,6 +1114,42 @@ class OptLM:
         # Epilogue
         self.store_hidden(
             self.execute_gen_len-1, self.num_layers-1, self.num_gpu_batches-1)
+        
+    def generation_loop_overlap_multi_batch_csv(self, csv_file_path):
+        with open(csv_file_path, mode="w", newline="") as csv_file:
+            csv_writer = csv.writer(csv_file)
+            csv_writer.writerow(["i", "j", "k", "sync_time"])
+            
+            # Prologue
+            for k in range(self.num_gpu_batches):
+                self.load_weight(0, 0, k)
+            self.load_hidden(0, 0, 0)
+            self.sync()
+
+            # Generate
+            for i in range(self.execute_gen_len):
+                timers("generate").start()
+                for k in range(self.num_gpu_batches):
+                    self.update_attention_mask(i, k)
+                for j in range(self.num_layers):
+                    for k in range(self.num_gpu_batches):
+                        self.load_weight(i, j+1, k)
+                        self.load_cache(i, j, k+1)
+                        self.store_hidden(i, j, k-1)
+                        self.load_hidden(i, j, k+1)
+                        self.compute_layer(i, j, k)
+                        self.store_cache(i, j, k-1)
+                        self.sync_csv(csv_writer=csv_writer, i=i, j=j, k=k)
+                timers("generate").stop()
+                if self.env.clear_cache:
+                    # print(f"generate {i} done")
+                    subprocess.run(["sync"], check=True)
+                    with open('/proc/sys/vm/drop_caches', 'w') as f:
+                        f.write('3')
+
+            # Epilogue
+            self.store_hidden(
+                self.execute_gen_len-1, self.num_layers-1, self.num_gpu_batches-1)
 
     def generation_loop_debug_single_batch(self):
         execute_num_batches = 20
