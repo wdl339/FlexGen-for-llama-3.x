@@ -1,4 +1,4 @@
-原项目：FlexGen: High-Throughput Generative Inference of Large Language Models with a Single GPU（ https://arxiv.org/abs/2303.06865 ），但该项目只支持 OPT 模型。有人（ https://github.com/marswen/FlexGen/tree/llama ）为其添加了 llama-2 与 Qwen-1.5 的支持。本项目在前人基础上再添加了对 llama-3.1、llama-3.2 与 qwen-2.5 模型的支持，增加了 server 功能，增加了 batched prefill 的功能，有一定的性能提升
+The original project only supported the OPT model. Someone (https://github.com/marswen/FlexGen/tree/llama) added support for llama-2 and Qwen-1.5 for it. This project further added support for llama-3.1, llama-3.2 and qwen-2.5 models based on the previous work, added server functionality, added the batched prefill function, and achieved a certain performance improvement.
 
 # FlexGen: High-throughput Generative Inference of Large Language Models with a Single GPU [[paper](https://arxiv.org/abs/2303.06865)]
 
